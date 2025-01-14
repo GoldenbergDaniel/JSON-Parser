@@ -1,0 +1,23 @@
+{
+  "items":
+  {
+    "apple":
+    {
+      "type": "fruit",
+      "food": 3,
+      "attributes": [
+        "sour", 
+        "sweet",
+        {
+         "real": true
+        }
+      ]
+    },
+    "stew":
+    {
+      "health": 5,
+      "food": 10,
+      "hostile": false
+    }
+  }
+}
