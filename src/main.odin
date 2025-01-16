@@ -6,7 +6,7 @@ import "core:strings"
 
 import "src:basic/mem"
 
-BUF_SIZE :: mem.MIB
+BUF_SIZE  :: mem.MIB
 TOKEN_CAP :: 2000
 
 Token :: struct
@@ -17,10 +17,10 @@ Token :: struct
 
 Token_Store :: struct
 {
-  arena: ^mem.Arena,
-  data:   []Token,
-  cnt:    int,
-  cap:    int,
+  data:     []Token,
+  count:    int,
+  capacity: int,
+  arena:    ^mem.Arena,
 }
 
 Token_Kind :: enum
@@ -29,163 +29,147 @@ Token_Kind :: enum
   String,
   Number,
   Boolean,
-  Open_Brace,
-  Closed_Brace,
-  Open_Bracket,
-  Closed_Bracket,
+  Brace_Open,
+  Brace_Closed,
+  Bracket_Open,
+  Bracket_Closed,
 }
 
-tokenize_json_from_path :: proc(path: string, arena: ^mem.Arena) -> Token_Store
+Tokenizer :: struct
 {
-  push_token :: proc(tokens: ^Token_Store, str: string, kind: Token_Kind)
-  {
-    assert(tokens.cnt < tokens.cap)
+  pos: int,
+}
 
-    tokens.data[tokens.cnt] = {
-      str = strings.clone(str, mem.allocator(tokens.arena)), 
-      kind = kind,
-    }
-    tokens.cnt += 1
+tokenize_json_from_bytes :: proc(data: []byte, arena: ^mem.Arena) -> Token_Store
+{
+  store: Token_Store
+  store.capacity = TOKEN_CAP
+  store.data = make([]Token, store.capacity)
+  store.arena = arena
+
+  tokenizer: Tokenizer
+
+  push_token :: proc(store: ^Token_Store, token: Token)
+  {
+    assert(store.count < store.capacity)
+
+    store.data[store.count] = token
+    store.count += 1
   }
 
-  temp := mem.scope_temp(mem.get_scratch())
+  stream := cast(string) data
 
-  tokens: Token_Store
-  tokens.cap = TOKEN_CAP
-  tokens.data = make([]Token, tokens.cap)
-  tokens.arena = arena
-
-  file, o_err := os.open(path, os.O_RDONLY)
-  if o_err != os.ERROR_NONE
+  for
   {
-    fmt.eprintln("Error opening file!", o_err)
-    return {}
-  }
-  
-  buf: []byte = make([]byte, BUF_SIZE, mem.allocator(temp.arena))
+    if tokenizer.pos >= len(stream) do break
 
-  stream_len, r_err := os.read(file, buf[:])
-  if r_err != os.ERROR_NONE
-  {
-    fmt.eprintln("Error reading file!", r_err)
-    return {}
-  }
-
-  stream := cast(string) buf[:stream_len]
-
-  for i := 0; i < stream_len;
-  {
     // - Tokenize symbols ---
     {
       kind: Token_Kind
-      switch stream[i]
+      switch stream[tokenizer.pos]
       {
-        case '{': kind = .Open_Brace
-        case '}': kind = .Closed_Brace
-        case '[': kind = .Open_Bracket
-        case ']': kind = .Closed_Bracket
+        case '{': kind = .Brace_Open
+        case '}': kind = .Brace_Closed
+        case '[': kind = .Bracket_Open
+        case ']': kind = .Bracket_Closed
       }
   
       if kind != .Nil
       {
-        push_token(&tokens, stream[i:i+1], kind)
-        i += 1
+        push_token(&store, {kind, stream[tokenizer.pos:tokenizer.pos+1]})
+        tokenizer.pos += 1
         continue
       }
     }
 
     // - Tokenize string ---
-    if stream[i] == '\"'
+    if stream[tokenizer.pos] == '\"'
     {
-      i += 1
-      closing_quote_idx: int = strings.index_byte(stream[i:], '\"')
+      tokenizer.pos += 1
+      closing_quote_idx: int = strings.index_byte(stream[tokenizer.pos:], '\"')
       if closing_quote_idx != -1
       {
-        push_token(&tokens, stream[i:i+closing_quote_idx], .String)
-        i += closing_quote_idx + 1
+        push_token(&store, {.String, stream[tokenizer.pos:tokenizer.pos+closing_quote_idx]})
+        tokenizer.pos += closing_quote_idx + 1
         continue
       }
     }
 
     // - Tokenize number ---
-    if stream[i] >= '0' && stream[i] <= '9'
+    if stream[tokenizer.pos] >= '0' && stream[tokenizer.pos] <= '9'
     {
-      substr := stream[i:i+1]
-      for j := 1; j < stream_len-i; j += 1
+      substr := stream[tokenizer.pos:tokenizer.pos+1]
+      for i := 1; i < len(stream)-tokenizer.pos; i += 1
       {
-        if stream[i+j] >= '0' && stream[i+j] <= '9'
-        {
-          substr = stream[i:i+1+j]
-        }
-        else do break
+        if stream[tokenizer.pos+i] < '0' || stream[tokenizer.pos+i] > '9' do break
+        substr = stream[tokenizer.pos:tokenizer.pos+1+i]
       }
       
-      push_token(&tokens, substr, .Number)
-      i += len(substr) + 1
+      push_token(&store, {.Number, substr})
+      tokenizer.pos += len(substr) + 1
       continue
     }
 
     // - Tokenize boolean ---
-    if stream[i] == 'f' || stream[i] == 't'
+    if stream[tokenizer.pos] == 'f' || stream[tokenizer.pos] == 't'
     {
       substr: string
-      if strings.compare(stream[i:i+5], "false") == 0
+      if strings.compare(stream[tokenizer.pos:tokenizer.pos+5], "false") == 0
       {
         substr = "false"
       }
-      else if strings.compare(stream[i:i+4], "true") == 0
+      else if strings.compare(stream[tokenizer.pos:tokenizer.pos+4], "true") == 0
       {
         substr = "true"
       }
 
-      push_token(&tokens, substr, .Boolean)
-      i += len(substr)
+      push_token(&store, {.Boolean, substr})
+      tokenizer.pos += len(substr)
       continue
     }
 
-    i += 1
+    tokenizer.pos += 1
   }
 
-  tokens.data = tokens.data[:tokens.cnt]
+  store.data = store.data[:store.count]
 
-  return tokens
+  return store
 }
 
-parse_json_tokens_iterative :: proc(tokens: Token_Store)
+Parser :: struct
 {
-  Parser_Context :: enum{Object, List}
+  pos:       int,
+  val_stack: [dynamic]string,
+  ctx_stack: [dynamic]Parser_Context,
+}
 
-  Parser :: struct
-  {
-    pos: int,
-    stack: [dynamic]string,
-    stack_ctx: [dynamic]Parser_Context,
-  }
+Parser_Context :: enum{Object, List}
 
-  consume_token :: proc(parser: ^Parser, tokens: Token_Store) -> Token
-  {
-    result := tokens.data[parser.pos]
-    parser.pos += 1
-    return result
-  }
+consume_token :: proc(parser: ^Parser, tokens: Token_Store) -> Token
+{
+  result := tokens.data[parser.pos]
+  parser.pos += 1
+  return result
+}
 
-  peek_token :: proc(parser: Parser, tokens: Token_Store) -> Token
-  {
-    if parser.pos == tokens.cnt do return {}
-    return tokens.data[parser.pos]
-  }
-  
-  is_token_value :: proc(token: Token) -> bool
-  {
-    return token.kind == .Boolean || token.kind == .Number || token.kind == .String
-  }
+peek_token :: proc(parser: Parser, tokens: Token_Store, offset := 0) -> Token
+{
+  return tokens.data[parser.pos + offset]
+}
 
+token_is_value :: proc(token: Token) -> bool
+{
+  return token.kind == .Boolean || token.kind == .Number || token.kind == .String
+}
+
+parse_json_iterative :: proc(tokens: Token_Store)
+{
   print_stack :: proc(parser: Parser)
   {
-    for str, idx in parser.stack
+    for str, idx in parser.val_stack
     {
       fmt.print(str)
-      if idx != len(parser.stack) - 1
+      if idx != len(parser.val_stack) - 1
       {
         fmt.print(".")
       }
@@ -196,10 +180,11 @@ parse_json_tokens_iterative :: proc(tokens: Token_Store)
   temp := mem.scope_temp(mem.get_scratch())
 
   parser: Parser
-  parser.stack = make([dynamic]string, mem.allocator(temp.arena))
-  parser.stack_ctx = make([dynamic]Parser_Context, mem.allocator(temp.arena))
+  parser.val_stack = make([dynamic]string, mem.allocator(temp.arena))
+  parser.ctx_stack = make([dynamic]Parser_Context, mem.allocator(temp.arena))
 
-  append(&parser.stack, "root")
+  append(&parser.val_stack, "root")
+  print_stack(parser)
 
   for
   {
@@ -209,51 +194,67 @@ parse_json_tokens_iterative :: proc(tokens: Token_Store)
     switch token.kind
     {
     case .Nil:
-    case .Open_Brace:
-      append(&parser.stack_ctx, Parser_Context.Object)
-    case .Closed_Brace:
-      pop(&parser.stack)
-      pop(&parser.stack_ctx)
-    case .Open_Bracket:
-      append(&parser.stack_ctx, Parser_Context.List)
-    case .Closed_Bracket:
-      pop(&parser.stack)
-      pop(&parser.stack_ctx)
+    case .Brace_Open:
+      append(&parser.ctx_stack, Parser_Context.Object)
+    case .Brace_Closed:
+      pop(&parser.val_stack)
+      pop(&parser.ctx_stack)
+    case .Bracket_Open:
+      append(&parser.ctx_stack, Parser_Context.List)
+    case .Bracket_Closed:
+      pop(&parser.val_stack)
+      pop(&parser.ctx_stack)
     case .Boolean, .String, .Number:
-      parser_ctx := parser.stack_ctx[len(parser.stack_ctx)-1]
+      parser_ctx := parser.ctx_stack[len(parser.ctx_stack)-1]
       if parser_ctx == .Object
       {
-        append(&parser.stack, token.str)
+        append(&parser.val_stack, token.str)
         print_stack(parser)
 
-        if is_token_value(peek_token(parser, tokens))
+        if token_is_value(peek_token(parser, tokens))
         {
-          append(&parser.stack, consume_token(&parser, tokens).str)
+          append(&parser.val_stack, consume_token(&parser, tokens).str)
           print_stack(parser)
-          pop(&parser.stack)
-          pop(&parser.stack)
+          pop(&parser.val_stack)
+          pop(&parser.val_stack)
         }
       }
       else if parser_ctx == .List
       {
-        append(&parser.stack, token.str)
+        append(&parser.val_stack, token.str)
         print_stack(parser)
-        pop(&parser.stack)
+        pop(&parser.val_stack)
       }
     }
   }
+}
+
+parse_json_recursive :: proc(tokens: Token_Store)
+{
+
 }
 
 main :: proc()
 {
   perm_arena: mem.Arena
   mem.init_arena_static(&perm_arena)
-  context.allocator = mem.allocator(&perm_arena)
 
-  temp_arena: mem.Arena
-  mem.init_arena_growing(&temp_arena)
-  context.temp_allocator = mem.allocator(&temp_arena)
+  PATH_TO_JSON :: "data.json"
+  file, o_err := os.open(PATH_TO_JSON, os.O_RDONLY)
+  if o_err != os.ERROR_NONE
+  {
+    fmt.eprintln("Error opening file!", o_err)
+    return
+  }
+
+  file_data := make([]byte, BUF_SIZE, mem.allocator(&perm_arena))
+  file_size, r_err := os.read(file, file_data[:])
+  if r_err != os.ERROR_NONE
+  {
+    fmt.eprintln("Error reading file!", r_err)
+    return
+  }
   
-  tokens := tokenize_json_from_path("data.json", &perm_arena)
-  parse_json_tokens_iterative(tokens)
+  tokens := tokenize_json_from_bytes(file_data[:file_size], &perm_arena)
+  parse_json_iterative(tokens)
 }

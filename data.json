@@ -4,7 +4,7 @@
     "apple":
     {
       "type": "fruit",
-      "food": 3,
+      "food": 3 ,
       "attributes": [
         "sour", 
         "sweet",
