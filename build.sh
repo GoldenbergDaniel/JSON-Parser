@@ -30,5 +30,5 @@ echo [mode:$MODE]
 echo [build]
 
 mkdir -p out
-odin build src -out:out/parser -target:$TARGET $FLAGS -show-timings
+odin build src -out:out/parser -target:$TARGET $FLAGS
 if [[ $MODE == "dev" ]]; then out/parser; fi

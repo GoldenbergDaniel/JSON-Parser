@@ -4,14 +4,15 @@
     "apple":
     {
       "type": "fruit",
-      "food": 3 ,
+      "food": 3,
       "attributes": [
         "sour", 
         "sweet",
         {
-         "real": true
+          "real": true
         }
-      ]
+      ],
+      "other": "thing"
     },
     "stew":
     {

@@ -164,6 +164,12 @@ token_is_value :: proc(token: Token) -> bool
 
 parse_json_iterative :: proc(tokens: Token_Store)
 {
+  temp := mem.scope_temp(mem.get_scratch())
+
+  parser: Parser
+  parser.val_stack = make([dynamic]string, mem.allocator(temp.arena))
+  parser.ctx_stack = make([dynamic]Parser_Context, mem.allocator(temp.arena))
+
   print_stack :: proc(parser: Parser)
   {
     for str, idx in parser.val_stack
@@ -176,12 +182,6 @@ parse_json_iterative :: proc(tokens: Token_Store)
     }
     fmt.print("\n")
   }
-
-  temp := mem.scope_temp(mem.get_scratch())
-
-  parser: Parser
-  parser.val_stack = make([dynamic]string, mem.allocator(temp.arena))
-  parser.ctx_stack = make([dynamic]Parser_Context, mem.allocator(temp.arena))
 
   append(&parser.val_stack, "root")
   print_stack(parser)
@@ -202,7 +202,6 @@ parse_json_iterative :: proc(tokens: Token_Store)
     case .Bracket_Open:
       append(&parser.ctx_stack, Parser_Context.List)
     case .Bracket_Closed:
-      pop(&parser.val_stack)
       pop(&parser.ctx_stack)
     case .Boolean, .String, .Number:
       parser_ctx := parser.ctx_stack[len(parser.ctx_stack)-1]
